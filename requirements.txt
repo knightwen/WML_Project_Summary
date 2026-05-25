@@ -1,0 +1,6 @@
+google-genai
+googlemaps
+openpyxl
+pandas
+PyMuPDF
+extract-msg

@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+*.py[cod]
+
+logs/
+data/cache/
+data/interim/
+data/processed/
+exports/
+reports/
+_backups/
+
+.env
+*.log

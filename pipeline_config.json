@@ -1,0 +1,143 @@
+{
+  "paths": {
+    "source_database_dir": "D:\\WML_Working_Record\\(20260505)-RoadMap_Structure_Jobs\\StructuralGroup_database",
+    "archive_database_dir": "D:\\WML_Working_Record\\(20260505)-RoadMap_Structure_Jobs\\StructuralGroup_database",
+    "disk_1000_3999": "X:\\1000 - 3999",
+    "disk_4000_6999": "X:\\4000 - 6999",
+    "disk_7000_9999": "X:\\7000 - 9999",
+    "disk_9000_9999": "Y:\\9000 - 9999",
+    "disk_10000_10999": "Y:\\10000 - 10999",
+    "disk_11000_11999": "Y:\\11000 - 11999",
+    "disk_12000_12999": "Y:\\12000 - 12999",
+    "disk_13000_13999": "Y:\\13000 - 13999",
+    "disk_jobs": "J:\\JOBS"
+  },
+  "logging": {
+    "log_dir": "logs",
+    "level": "INFO"
+  },
+  "safety": {
+    "backup_existing_outputs": true
+  },
+  "step1": {
+    "input_excel": "{source_database_dir}\\job_sum.xlsx",
+    "output_excel": "data\\processed\\1_source_projects_{batch_range}.xlsx",
+    "sort_column": "Start Date",
+    "row_start": 201,
+    "row_end": 400
+  },
+  "step2": {
+    "source_excel": "data\\processed\\1_source_projects_{batch_range}.xlsx",
+    "target_database_dir": "{archive_database_dir}",
+    "file_archive_jsonl": "data\\interim\\2_project_file_archive_{batch_range}.jsonl",
+    "file_archive_excel": "reports\\2_project_file_archive_{batch_range}.xlsx",
+    "issue_excel": "reports\\2_project_file_archive_issues_{batch_range}.xlsx",
+    "resume_from_existing_output": true,
+    "retry_archive_issue_rows": true,
+    "refresh_folder_cache": false,
+    "folder_index_cache": "data\\cache\\2_disk_folder_index_cache.json",
+    "email_fallback_max_files": 5,
+    "email_body_scan_name_limit": 3,
+    "email_body_scan_max_files": 50,
+    "fallback_roots": ["{disk_jobs}"],
+    "rerun_project_ids": [],
+    "project_disk_rules": [
+      {
+        "min_id": 1000,
+        "max_id": 3999,
+        "roots": ["{disk_1000_3999}"]
+      },
+      {
+        "min_id": 4000,
+        "max_id": 6999,
+        "roots": ["{disk_4000_6999}"]
+      },
+      {
+        "min_id": 7000,
+        "max_id": 9999,
+        "roots": ["{disk_7000_9999}",
+                  "{disk_9000_9999}"]
+      },
+      {
+        "min_id": 9000,
+        "max_id": 9999,
+        "roots": ["{disk_7000_9999}",
+                  "{disk_9000_9999}"]
+      },
+      {
+        "min_id": 10000,
+        "max_id": 10999,
+        "roots": ["{disk_10000_10999}"]
+      },
+      {
+        "min_id": 11000,
+        "max_id": 11999,
+        "roots": ["{disk_11000_11999}"]
+      },
+      {
+        "min_id": 12000,
+        "max_id": 12999,
+        "roots": ["{disk_12000_12999}"]
+      },
+      {
+        "min_id": 13000,
+        "max_id": 13999,
+        "roots": ["{disk_13000_13999}"]
+      }
+    ],
+    "target_subfolders": [
+      "engineering",
+      "Financial Management"
+    ],
+    "authority_keywords": [
+      "authority",
+      "autority"
+    ],
+    "authority_suffixes": [
+      ".docx",
+      ".pdf"
+    ],
+    "target_file_suffixes": [
+      ".pdf",
+      ".docx"
+    ]
+  },
+  "step3": {
+    "file_archive_jsonl": "data\\interim\\2_project_file_archive_{batch_range}.jsonl",
+    "text_cache_jsonl": "data\\cache\\3_project_pdf_text_cache_{batch_range}.jsonl",
+    "text_cache_excel": "reports\\3_project_pdf_text_cache_{batch_range}.xlsx",
+    "text_extraction_log": "logs\\3_pdf_text_extraction_log_{batch_range}.txt",
+    "max_pages_per_pdf": 10,
+    "resume_from_existing_output": false,
+    "retry_text_issue_rows": true
+  },
+  "step4": {
+    "text_cache_jsonl": "data\\cache\\3_project_pdf_text_cache_{batch_range}.jsonl",
+    "output_excel": "data\\processed\\4_project_analysis_results_{batch_range}.xlsx",
+    "fallback_csv": "data\\processed\\4_project_analysis_results_{batch_range}.csv",
+    "model_name": "gemini-3.1-flash-lite",
+    "max_text_chars": 12000,
+    "request_delay_seconds": 2,
+    "save_every_n_rows": 1,
+    "stop_on_quota_error": true,
+    "resume_from_existing_output": true,
+    "retry_ai_error_rows": true
+  },
+  "step5": {
+    "input_excel": "data\\processed\\4_project_analysis_results_{batch_range}.xlsx",
+    "output_excel": "data\\processed\\5_final_project_results_with_coordinates_{batch_range}.xlsx",
+    "fallback_csv": "data\\processed\\5_final_project_results_with_coordinates_{batch_range}.csv",
+    "fallback_excel": "data\\processed\\5_final_project_results_with_coordinates_recovered_{batch_range}.xlsx",
+    "request_delay_seconds": 0.1,
+    "save_every_n_rows": 20,
+    "resume_from_existing_output": true,
+    "retry_error_geocodes": true
+  },
+  "step6": {
+    "input_excel": "data\\processed\\5_final_project_results_with_coordinates_{batch_range}.xlsx",
+    "output_dir": "exports\\google_earth",
+    "output_kml": "6_project_locations_google_earth_{batch_range}.kml",
+    "output_csv": "6_project_locations_google_earth_{batch_range}.csv",
+    "output_xlsx": "6_project_locations_google_earth_{batch_range}.xlsx"
+  }
+}
