@@ -37,6 +37,16 @@ from pipeline_utils import (
 # Set GOOGLE_MAPS_API_KEY in your environment before running this step.
 GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY", "").strip()
 
+API_CONFIGURATION_ERROR_PATTERNS = [
+    "request_denied",
+    "billing",
+    "api key",
+    "apikey",
+    "permission",
+    "not authorized",
+    "unauthorized",
+]
+
 COORDINATE_COLUMNS = [
     "Google Latitude",
     "Google Longitude",
@@ -124,6 +134,29 @@ def geocode(gmaps_client, query):
         "Google Result Types": ", ".join(first.get("types", [])),
         "Google Geocode Status": "Success",
     }
+
+
+def is_api_configuration_error(status):
+    status = str(status or "").lower()
+    return any(pattern in status for pattern in API_CONFIGURATION_ERROR_PATTERNS)
+
+
+def print_geocode_status_summary(df):
+    if "Google Geocode Status" not in df.columns:
+        return
+
+    status_counts = (
+        df["Google Geocode Status"]
+        .fillna("<blank>")
+        .astype(str)
+        .str.strip()
+        .replace("", "<blank>")
+        .value_counts()
+    )
+
+    print("\nGoogle geocode status summary:")
+    for status, count in status_counts.items():
+        print(f"  {status}: {count}")
 
 
 def build_final_address(row):
@@ -280,6 +313,7 @@ def main():
     processed = 0
     skipped = 0
     total = len(df)
+    critical_api_error = ""
 
     for index, row in df.iterrows():
         if is_geocode_complete(row):
@@ -318,6 +352,10 @@ def main():
         for column, value in result.items():
             df.at[index, column] = value
 
+        geocode_status = result.get("Google Geocode Status", "")
+        if is_api_configuration_error(geocode_status):
+            critical_api_error = str(geocode_status)
+
         final_address, source, needs_review = build_final_address(df.loc[index])
         df.at[index, "Final Project Address"] = final_address
         df.at[index, "Final Address Source"] = source
@@ -328,6 +366,13 @@ def main():
         if processed % SAVE_EVERY_N_ROWS == 0:
             print(f"  Saving progress after {processed} geocode requests...")
             save_results(df)
+
+        if critical_api_error:
+            print("\nWARNING: Google Maps API did not return coordinates.")
+            print(f"Reason: {critical_api_error}")
+            print("Check GOOGLE_MAPS_API_KEY, API restrictions, Geocoding API access, and Google Cloud Billing.")
+            print("Stopping Step 5 now so the failure is visible.")
+            break
 
         time.sleep(REQUEST_DELAY_SECONDS)
 
@@ -341,11 +386,16 @@ def main():
     save_results(df)
 
     success_count = (df["Google Geocode Status"] == "Success").sum()
+    print_geocode_status_summary(df)
     print("\nTask complete.")
     print(f"Rows: {total}")
     print(f"Geocode requests this run: {processed}")
     print(f"Skipped rows: {skipped}")
     print(f"Successful geocodes: {success_count}")
+    if success_count == 0:
+        print("WARNING: Step 5 produced zero successful geocodes. Step 6 will have no locations to export.")
+    if critical_api_error:
+        print("WARNING: Fix the Google Maps API issue above, then rerun Step 5 before running Step 6.")
     print(f"Output saved to: {OUTPUT_EXCEL}")
 
 

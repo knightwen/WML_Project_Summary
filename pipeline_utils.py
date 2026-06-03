@@ -184,6 +184,34 @@ def ensure_parent_dir(path):
     return path
 
 
+def normalize_windows_path(path):
+    """Return an absolute, case-normalized Path without requiring it to exist."""
+    return Path(path).expanduser().absolute()
+
+
+def is_path_under_any_root(path, roots):
+    """Return True when path is equal to or inside one of the supplied roots."""
+    normalized_path = normalize_windows_path(path)
+
+    for root in roots:
+        normalized_root = normalize_windows_path(root)
+        try:
+            normalized_path.relative_to(normalized_root)
+            return True
+        except ValueError:
+            continue
+
+    return False
+
+
+def assert_path_not_under_roots(path, roots, label):
+    """Raise when a configured output path points inside a cloud source root."""
+    if is_path_under_any_root(path, roots):
+        raise ValueError(
+            f"{label} must be local, but points inside a cloud source root: {path}"
+        )
+
+
 def write_excel_safely(df, output_path, index=False, backup=True):
     output_path = ensure_parent_dir(output_path)
     backup_existing_file(output_path, enabled=backup)

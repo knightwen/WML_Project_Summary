@@ -69,10 +69,17 @@ EMAIL_CONTACT_FIRST_NAMES = {
     for name in _CONFIG.get(
         "email_contact_first_names",
         [
+            "Stephen",
+            "Steve",
+            "Jing",
+            "Jonathan",
+            "Michael",
+            "Rodgie",
+            "Salman",
             "Greg",
+            "Nick",
             "Henk",
             "Anthony",
-            "Nick",
             "Royce",
             "Imram",
             "Lobzang",
@@ -81,19 +88,11 @@ EMAIL_CONTACT_FIRST_NAMES = {
             "Himanshu",
             "Kevin",
             "Robert",
-            "Stephen",
-            "Jing",
-            "Jonathan",
-            "Michael",
-            "Rodgie",
-            "Salman",
         ],
     )
 }
 SCORING_FALLBACK_MAX_FILES = int(_CONFIG.get("scoring_fallback_max_files", 2))
 EMAIL_FALLBACK_MAX_FILES = int(_CONFIG.get("email_fallback_max_files", 2))
-EMAIL_BODY_SCAN_NAME_LIMIT = int(_CONFIG.get("email_body_scan_name_limit", 3))
-EMAIL_BODY_SCAN_MAX_FILES = int(_CONFIG.get("email_body_scan_max_files", 50))
 AUTHORITY_ONLY_STATUS = "Authority Only"
 ARCHIVE_RETRY_STATUSES = {
     "Not Found",
@@ -333,13 +332,6 @@ def is_under_email_folder(file_path):
     return any(part in EMAIL_FOLDER_NAMES for part in parts)
 
 
-def get_first_name(value):
-    match = re.search(r"[A-Za-z]+", str(value or ""))
-    if not match:
-        return ""
-    return match.group(0).lower()
-
-
 def iter_email_roots(project_folder):
     try:
         children = list(Path(project_folder).iterdir())
@@ -358,18 +350,12 @@ def iter_email_roots(project_folder):
             yield child
 
 
-def find_contact_first_names(text, names=None):
+def contains_contact_first_name(text):
     text = str(text or "").lower()
-    names = names or EMAIL_CONTACT_FIRST_NAMES
-    return [
-        first_name
-        for first_name in names
-        if re.search(rf"\b{re.escape(first_name)}\b", text)
-    ]
-
-
-def contains_contact_first_name(text, names=None):
-    return bool(find_contact_first_names(text, names=names))
+    return any(
+        re.search(rf"\b{re.escape(first_name)}\b", text)
+        for first_name in EMAIL_CONTACT_FIRST_NAMES
+    )
 
 
 def read_msg_search_text(msg_path):
@@ -408,59 +394,6 @@ def get_latest_files(candidate_files, limit):
         key=lambda path: path.stat().st_mtime,
         reverse=True,
     )[:limit]
-
-
-def iter_subfolders(root):
-    try:
-        iterator = Path(root).rglob("*")
-        for path in iterator:
-            try:
-                if path.is_dir():
-                    yield path
-            except OSError:
-                continue
-    except OSError as exc:
-        print(f"  Warning: cannot scan email subfolders under {root}: {exc}")
-
-
-def find_manager_email_folders(email_roots, manager):
-    manager_first_name = get_first_name(manager)
-    if not manager_first_name:
-        return []
-
-    matched_folders = []
-
-    for email_root in email_roots:
-        if contains_contact_first_name(email_root.name, names={manager_first_name}):
-            matched_folders.append(email_root)
-
-        for folder in iter_subfolders(email_root):
-            if contains_contact_first_name(folder.name, names={manager_first_name}):
-                matched_folders.append(folder)
-
-    return add_unique_paths(matched_folders)
-
-
-def find_email_folder_contact_names(email_roots):
-    matched_names = []
-
-    for email_root in email_roots:
-        matched_names.extend(find_contact_first_names(email_root.name))
-
-        for folder in iter_subfolders(email_root):
-            matched_names.extend(find_contact_first_names(folder.name))
-
-    return list(dict.fromkeys(matched_names))
-
-
-def get_msg_files_under(root):
-    msg_files = []
-
-    for file_path in iter_files_safely(root):
-        if is_email_file(file_path):
-            msg_files.append(file_path)
-
-    return msg_files
 
 
 def get_preferred_authority_file(candidate_files):
@@ -589,7 +522,7 @@ def find_scoring_fallback_files(project_folder, project_id):
     ]
 
 
-def find_relevant_email_files(project_folder, manager):
+def find_relevant_email_files(project_folder):
     email_files = []
     email_roots = list(iter_email_roots(project_folder))
 
@@ -598,55 +531,29 @@ def find_relevant_email_files(project_folder, manager):
 
     print(f"  Email folders found: {len(email_roots)}")
 
-    manager_folders = find_manager_email_folders(email_roots, manager)
-    if manager_folders:
-        print(f"  Manager email folders matched: {len(manager_folders)}")
-        for manager_folder in manager_folders:
-            email_files.extend(get_msg_files_under(manager_folder))
-            if len(email_files) >= EMAIL_FALLBACK_MAX_FILES:
-                return get_latest_files(email_files, EMAIL_FALLBACK_MAX_FILES)
-
-        return get_latest_files(email_files, EMAIL_FALLBACK_MAX_FILES)
-
-    matched_names = find_email_folder_contact_names(email_roots)
-    msg_files = []
-
     for email_root in email_roots:
         for file_path in iter_files_safely(email_root):
             if not is_email_file(file_path):
                 continue
 
-            msg_files.append(file_path)
             path_text = str(file_path)
-            path_names = find_contact_first_names(path_text)
-            if path_names:
-                matched_names.extend(path_names)
+            if contains_contact_first_name(path_text):
                 email_files.append(file_path)
                 if len(email_files) >= EMAIL_FALLBACK_MAX_FILES:
                     return get_latest_files(email_files, EMAIL_FALLBACK_MAX_FILES)
+                continue
 
-    if email_files:
-        return get_latest_files(email_files, EMAIL_FALLBACK_MAX_FILES)
+            msg_text = read_msg_search_text(file_path)
+            if msg_text and contains_contact_first_name(msg_text):
+                email_files.append(file_path)
 
-    matched_names = list(dict.fromkeys(matched_names))[:EMAIL_BODY_SCAN_NAME_LIMIT]
-    if not matched_names:
-        print("  No email path/name matches found. Skipping MSG body scan.")
-        return []
-
-    print(f"  Scanning MSG bodies for names: {', '.join(matched_names)}")
-
-    for file_path in get_latest_files(msg_files, EMAIL_BODY_SCAN_MAX_FILES):
-        msg_text = read_msg_search_text(file_path)
-        if msg_text and contains_contact_first_name(msg_text, names=set(matched_names)):
-            email_files.append(file_path)
-
-        if len(email_files) >= EMAIL_FALLBACK_MAX_FILES:
-            return get_latest_files(email_files, EMAIL_FALLBACK_MAX_FILES)
+            if len(email_files) >= EMAIL_FALLBACK_MAX_FILES:
+                return get_latest_files(email_files, EMAIL_FALLBACK_MAX_FILES)
 
     return get_latest_files(email_files, EMAIL_FALLBACK_MAX_FILES)
 
 
-def find_latest_project_files(project_folder, project_id, manager=""):
+def find_latest_project_files(project_folder, project_id):
     """
     Selection priority:
 
@@ -752,7 +659,7 @@ def find_latest_project_files(project_folder, project_id, manager=""):
             print(f"  Scoring fallback files found: {len(fallback_files)}")
             selected.extend(fallback_files)
 
-    email_files = find_relevant_email_files(project_folder, manager)
+    email_files = find_relevant_email_files(project_folder)
     if email_files:
         print(f"  Email files found: {len(email_files)}")
         selected.extend(email_files)
@@ -1105,7 +1012,6 @@ def main():
         selected_files = find_latest_project_files(
             project_folder,
             project_id,
-            record["manager"],
         )
         selected_files = add_unique_paths(selected_files)
 

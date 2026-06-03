@@ -4,3 +4,4 @@ openpyxl
 pandas
 PyMuPDF
 extract-msg
+pytest

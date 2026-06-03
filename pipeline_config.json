@@ -23,8 +23,8 @@
     "input_excel": "{source_database_dir}\\job_sum.xlsx",
     "output_excel": "data\\processed\\1_source_projects_{batch_range}.xlsx",
     "sort_column": "Start Date",
-    "row_start": 201,
-    "row_end": 400
+    "row_start": 1700,
+    "row_end": 1843
   },
   "step2": {
     "source_excel": "data\\processed\\1_source_projects_{batch_range}.xlsx",
@@ -120,7 +120,7 @@
     "request_delay_seconds": 2,
     "save_every_n_rows": 1,
     "stop_on_quota_error": true,
-    "resume_from_existing_output": true,
+    "resume_from_existing_output": false,
     "retry_ai_error_rows": true
   },
   "step5": {
@@ -130,7 +130,7 @@
     "fallback_excel": "data\\processed\\5_final_project_results_with_coordinates_recovered_{batch_range}.xlsx",
     "request_delay_seconds": 0.1,
     "save_every_n_rows": 20,
-    "resume_from_existing_output": true,
+    "resume_from_existing_output": false,
     "retry_error_geocodes": true
   },
   "step6": {
