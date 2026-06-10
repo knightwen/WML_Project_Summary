@@ -66,6 +66,11 @@ _CONFIG = require_config_section("step4")
 TEXT_CACHE_JSONL = require_config_value(_CONFIG, "text_cache_jsonl", "step4")
 OUTPUT_EXCEL = require_config_value(_CONFIG, "output_excel", "step4")
 FALLBACK_CSV = require_config_value(_CONFIG, "fallback_csv", "step4")
+USE_AI_QUEUE = bool(_CONFIG.get("use_ai_queue", False))
+AI_QUEUE_EXCEL = _CONFIG.get("ai_queue_excel", "")
+AI_QUEUE_JSONL = _CONFIG.get("ai_queue_jsonl", TEXT_CACHE_JSONL)
+AI_BATCH = str(_CONFIG.get("ai_batch", "")).strip()
+MAX_PROJECTS_THIS_RUN = int(_CONFIG.get("max_projects_this_run", 0))
 MODEL_NAME = _CONFIG.get("model_name", "gemini-3.1-flash-lite")
 MAX_TEXT_CHARS = int(_CONFIG.get("max_text_chars", 12000))
 REQUEST_DELAY_SECONDS = float(_CONFIG.get("request_delay_seconds", 2))
@@ -91,6 +96,66 @@ def load_jsonl(path):
                 print(f"Skipping invalid JSON on line {line_number}: {exc}")
 
     return records
+
+
+def normalize_project_id(value):
+    text = str(value or "").strip()
+    if text.endswith(".0"):
+        text = text[:-2]
+    return text
+
+
+def is_yes(value):
+    return str(value or "").strip().lower() in {"yes", "y", "true", "1"}
+
+
+def load_ai_queue_excel(path):
+    queue_path = Path(path)
+    if not queue_path.exists():
+        raise FileNotFoundError(f"AI queue Excel not found: {queue_path}")
+    return pd.read_excel(queue_path)
+
+
+def filter_records_for_ai_queue(records, queue_df, ai_batch="", max_projects=0):
+    if queue_df.empty:
+        return []
+
+    queue = queue_df.copy()
+    queue["Project ID"] = queue["Project ID"].apply(normalize_project_id)
+    queue["Ready For AI"] = queue["Ready For AI"].apply(is_yes)
+
+    if "AI Batch" not in queue.columns:
+        queue["AI Batch"] = ""
+    if "AI Priority" not in queue.columns:
+        queue["AI Priority"] = range(1, len(queue) + 1)
+
+    queue["AI Batch"] = queue["AI Batch"].fillna("").astype(str).str.strip()
+    queue["AI Priority"] = pd.to_numeric(queue["AI Priority"], errors="coerce")
+    queue["AI Priority"] = queue["AI Priority"].fillna(len(queue) + 1)
+
+    selected_queue = queue[queue["Ready For AI"]].copy()
+    if ai_batch:
+        selected_queue = selected_queue[selected_queue["AI Batch"] == str(ai_batch)]
+
+    selected_queue = selected_queue.sort_values(["AI Priority", "Project ID"])
+    if max_projects and max_projects > 0:
+        selected_queue = selected_queue.head(max_projects)
+
+    selected_ids = [
+        normalize_project_id(project_id)
+        for project_id in selected_queue["Project ID"].tolist()
+    ]
+    selected_id_set = set(selected_ids)
+    records_by_project_id = {
+        normalize_project_id(record.get("project_id", "")): record
+        for record in records
+    }
+
+    return [
+        records_by_project_id[project_id]
+        for project_id in selected_ids
+        if project_id in selected_id_set and project_id in records_by_project_id
+    ]
 
 
 def clean_text_for_prompt(text):
@@ -281,7 +346,7 @@ def save_output_rows(output_rows):
 
 
 def load_existing_output_rows():
-    if not RESUME_FROM_EXISTING_OUTPUT:
+    if not RESUME_FROM_EXISTING_OUTPUT and not USE_AI_QUEUE:
         return {}
 
     output_path = Path(OUTPUT_EXCEL)
@@ -418,7 +483,7 @@ def build_output_row(record, ai_data, ai_error):
 
 def main():
     setup_logging("step4_ai_project_analysis")
-    cache_path = Path(TEXT_CACHE_JSONL)
+    cache_path = Path(AI_QUEUE_JSONL if USE_AI_QUEUE else TEXT_CACHE_JSONL)
 
     if not cache_path.exists():
         print(f"Error: text cache not found: {cache_path}")
@@ -436,11 +501,37 @@ def main():
         print(f"No records found in {cache_path}.")
         return
 
+    processing_records = records
+    if USE_AI_QUEUE:
+        try:
+            queue_df = load_ai_queue_excel(AI_QUEUE_EXCEL)
+        except FileNotFoundError as exc:
+            print(f"Error: {exc}")
+            print("Run step3_optional_ai_queue.py first, or disable step4.use_ai_queue.")
+            return
+
+        processing_records = filter_records_for_ai_queue(
+            records,
+            queue_df,
+            ai_batch=AI_BATCH,
+            max_projects=MAX_PROJECTS_THIS_RUN,
+        )
+        print(f"AI queue mode enabled: {AI_QUEUE_EXCEL}")
+        if AI_BATCH:
+            print(f"AI batch filter: {AI_BATCH}")
+        if MAX_PROJECTS_THIS_RUN > 0:
+            print(f"Max projects this run: {MAX_PROJECTS_THIS_RUN}")
+        print(f"Projects selected for this run: {len(processing_records)}")
+
+        if not processing_records:
+            print("No queue rows selected for AI.")
+            return
+
     try:
         validate_records(
-            records,
+            processing_records,
             ["project_id", "status", "combined_text"],
-            TEXT_CACHE_JSONL,
+            str(cache_path),
         )
     except ValueError as exc:
         print(f"Error: {exc}")
@@ -451,12 +542,12 @@ def main():
     processed_this_run = 0
     skipped_existing = 0
 
-    for index, record in enumerate(records, start=1):
+    for index, record in enumerate(processing_records, start=1):
         project_id = str(record.get("project_id", "")).strip()
         extraction_status = record.get("status", "")
         existing_row = output_rows_by_project_id.get(project_id)
 
-        print(f"\nProcessing [{index}/{len(records)}]: {project_id}")
+        print(f"\nProcessing [{index}/{len(processing_records)}]: {project_id}")
 
         if existing_row and is_completed_output_row(existing_row):
             print("  Existing completed result found. Skipping.")

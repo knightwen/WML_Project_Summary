@@ -23,8 +23,8 @@
     "input_excel": "{source_database_dir}\\job_sum.xlsx",
     "output_excel": "data\\processed\\1_source_projects_{batch_range}.xlsx",
     "sort_column": "Start Date",
-    "row_start": 1700,
-    "row_end": 1843
+    "row_start": 1,
+    "row_end": 500
   },
   "step2": {
     "source_excel": "data\\processed\\1_source_projects_{batch_range}.xlsx",
@@ -112,8 +112,21 @@
     "resume_from_existing_output": false,
     "retry_text_issue_rows": true
   },
+  "step3_optional_ai_queue": {
+    "input_jsonl_files": [
+      "data\\cache\\3_project_pdf_text_cache_{batch_range}.jsonl"
+    ],
+    "output_excel": "data\\processed\\3_optional_ai_queue_{batch_range}.xlsx",
+    "output_jsonl": "data\\processed\\3_optional_ai_queue_{batch_range}.jsonl",
+    "ready_statuses": ["Success", "Partial Success"]
+  },
   "step4": {
     "text_cache_jsonl": "data\\cache\\3_project_pdf_text_cache_{batch_range}.jsonl",
+    "use_ai_queue": false,
+    "ai_queue_excel": "data\\processed\\3_optional_ai_queue_{batch_range}.xlsx",
+    "ai_queue_jsonl": "data\\processed\\3_optional_ai_queue_{batch_range}.jsonl",
+    "ai_batch": "",
+    "max_projects_this_run": 0,
     "output_excel": "data\\processed\\4_project_analysis_results_{batch_range}.xlsx",
     "fallback_csv": "data\\processed\\4_project_analysis_results_{batch_range}.csv",
     "model_name": "gemini-3.1-flash-lite",
