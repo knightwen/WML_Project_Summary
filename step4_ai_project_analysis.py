@@ -431,6 +431,43 @@ def get_ai_analysis(client, record, text):
         return RESULT_FIELDS.copy(), f"AI parsing error: {exc}"
 
 
+def is_blank_or_not_specified(value):
+    text = str(value or "").strip().lower()
+    return text in {"", "not specified", "none", "null", "n/a"}
+
+
+def get_ai_quality_issues(ai_data):
+    issues = []
+
+    if is_blank_or_not_specified(ai_data.get("generated_project_name")):
+        issues.append("generated_project_name is empty")
+
+    if is_blank_or_not_specified(ai_data.get("profile")):
+        issues.append("profile is empty")
+
+    if is_blank_or_not_specified(ai_data.get("description")):
+        issues.append("description is empty")
+
+    address = ai_data.get("address")
+    query = ai_data.get("google_maps_query")
+    address_confidence = str(ai_data.get("address_confidence", "")).strip().lower()
+    address_source = str(ai_data.get("address_source", "")).strip().lower()
+
+    if is_blank_or_not_specified(address):
+        issues.append("address is not specified")
+
+    if is_blank_or_not_specified(query):
+        issues.append("google_maps_query is empty")
+
+    if address_confidence == "low":
+        issues.append("address_confidence is low")
+
+    if address_source == "not_found":
+        issues.append("address_source is not_found")
+
+    return issues
+
+
 def build_output_row(record, ai_data, ai_error):
     extraction_status = record.get("status", "")
     status = extraction_status
@@ -442,6 +479,14 @@ def build_output_row(record, ai_data, ai_error):
 
     if ai_error:
         errors.append(ai_error)
+    elif status == "Success":
+        quality_issues = get_ai_quality_issues(ai_data)
+        if quality_issues:
+            status = "AI Review Needed"
+            errors.append(
+                "AI content quality issue: "
+                + "; ".join(quality_issues)
+            )
 
     return {
         "Project ID": record.get("project_id", ""),

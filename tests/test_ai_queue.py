@@ -1,7 +1,7 @@
 import pandas as pd
 
 from step3_optional_ai_queue import build_queue_rows
-from step4_ai_project_analysis import filter_records_for_ai_queue
+from step4_ai_project_analysis import build_output_row, filter_records_for_ai_queue
 
 
 def test_build_queue_rows_marks_text_success_ready_for_ai():
@@ -55,3 +55,34 @@ def test_filter_records_for_ai_queue_uses_ready_batch_and_limit():
     )
 
     assert [record["project_id"] for record in selected] == ["1003"]
+
+
+def test_build_output_row_marks_low_quality_ai_content_for_review():
+    row = build_output_row(
+        {
+            "project_id": "1001",
+            "status": "Success",
+            "combined_text": "text was sent to AI",
+            "project_display_name": "1001 Sample Project",
+        },
+        {
+            "generated_project_name": "",
+            "profile": "",
+            "description": "",
+            "job_type": "",
+            "keywords": "",
+            "industry": "",
+            "address": "Not specified",
+            "google_maps_query": "",
+            "address_confidence": "low",
+            "address_source": "not_found",
+            "client_name": "Not specified",
+            "client_contact": "Not specified",
+        },
+        "",
+    )
+
+    assert row["Status"] == "AI Review Needed"
+    assert "AI content quality issue" in row["Errors"]
+    assert "google_maps_query is empty" in row["Errors"]
+    assert row["Address Confidence"] == "low"
