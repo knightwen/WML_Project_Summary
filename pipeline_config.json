@@ -34,6 +34,7 @@
     "issue_excel": "reports\\2_project_file_archive_issues_{batch_range}.xlsx",
     "resume_from_existing_output": true,
     "retry_archive_issue_rows": true,
+    "prefer_existing_archive_files": true,
     "refresh_folder_cache": false,
     "folder_index_cache": "data\\cache\\2_disk_folder_index_cache.json",
     "email_fallback_max_files": 5,
@@ -131,13 +132,17 @@
     "request_delay_seconds": 0.1,
     "save_every_n_rows": 20,
     "resume_from_existing_output": false,
-    "retry_error_geocodes": true
+    "retry_error_geocodes": true,
+    "preferred_state": "WA",
+    "preferred_country": "AU",
+    "fallback_without_state_filter": true
   },
   "step6": {
     "input_excel": "data\\processed\\5_final_project_results_with_coordinates_{batch_range}.xlsx",
     "output_dir": "exports\\google_earth",
     "output_kml": "6_project_locations_google_earth_{batch_range}.kml",
     "output_csv": "6_project_locations_google_earth_{batch_range}.csv",
-    "output_xlsx": "6_project_locations_google_earth_{batch_range}.xlsx"
+    "output_xlsx": "6_project_locations_google_earth_{batch_range}.xlsx",
+    "failure_report_xlsx": "6_project_locations_google_earth_failures_{batch_range}.xlsx"
   }
 }

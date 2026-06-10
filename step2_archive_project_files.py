@@ -55,6 +55,7 @@ FILE_ARCHIVE_EXCEL = require_config_value(_CONFIG, "file_archive_excel", "step2"
 ISSUE_EXCEL = require_config_value(_CONFIG, "issue_excel", "step2")
 RESUME_FROM_EXISTING_OUTPUT = bool(_CONFIG.get("resume_from_existing_output", True))
 RETRY_ARCHIVE_ISSUE_ROWS = bool(_CONFIG.get("retry_archive_issue_rows", True))
+PREFER_EXISTING_ARCHIVE_FILES = bool(_CONFIG.get("prefer_existing_archive_files", False))
 TARGET_SUBFOLDERS = _CONFIG.get("target_subfolders", ["engineering", "Financial Management"])
 AUTHORITY_KEYWORDS = _CONFIG.get("authority_keywords", ["authority", "autority"])
 AUTHORITY_SUFFIXES = set(_CONFIG.get("authority_suffixes", [".docx", ".pdf"]))
@@ -101,6 +102,20 @@ ARCHIVE_RETRY_STATUSES = {
     AUTHORITY_ONLY_STATUS,
     "Copy Failed",
     "Partial Success",
+}
+LOW_VALUE_FILE_KEYWORDS = {
+    "invoice": "invoice/admin",
+    "timesheet": "timesheet/admin",
+    "receipt": "receipt/admin",
+    "external provider invoices": "invoice/admin",
+    "job status form template": "template/admin form",
+    "template": "template/admin form",
+}
+LOW_VALUE_PATH_PENALTIES = {
+    "ohs": ("OHS/JSEA/MSDS path", -180),
+    "jsea": ("OHS/JSEA/MSDS path", -180),
+    "msds": ("OHS/JSEA/MSDS path", -180),
+    "health & safety": ("OHS/JSEA/MSDS path", -120),
 }
 
 
@@ -327,6 +342,31 @@ def is_email_file(file_path):
     return Path(file_path).suffix.lower() in EMAIL_SUFFIXES
 
 
+def normalize_path_text(file_path):
+    return str(file_path).replace("/", "\\").lower()
+
+
+def should_exclude_low_value_file(file_path):
+    path = Path(file_path)
+    name_lower = path.name.lower()
+    path_lower = normalize_path_text(path)
+
+    try:
+        if path.exists() and path.stat().st_size <= 0:
+            return True, "zero byte file"
+    except OSError:
+        return True, "cannot inspect file"
+
+    if name_lower.startswith("~$"):
+        return True, "temporary office lock file"
+
+    for keyword, reason in LOW_VALUE_FILE_KEYWORDS.items():
+        if keyword in path_lower:
+            return True, reason
+
+    return False, ""
+
+
 def is_under_email_folder(file_path):
     parts = [part.lower() for part in Path(file_path).parts]
     return any(part in EMAIL_FOLDER_NAMES for part in parts)
@@ -441,68 +481,206 @@ def add_unique_paths(paths):
 def score_fallback_file(file_path, project_id):
     path = Path(file_path)
     name_lower = path.name.lower()
-    path_lower = str(path).lower()
+    path_lower = normalize_path_text(path)
     score = 0
+    reasons = []
 
     if filename_starts_with_project_id(path, project_id):
         score += 100
+        reasons.append("project id in file name")
 
     if re.search(rf"\b{re.escape(project_id)}\b", name_lower):
         score += 60
+        if "project id in file name" not in reasons:
+            reasons.append("project id in file name")
+
+    path_bonuses = {
+        "proposal": ("proposal path", 90),
+        "financial management": ("financial management path", 25),
+        "engineering\\reporting": ("engineering reporting path", 55),
+        "engineering\\issued": ("engineering issued path", 45),
+        "engineering\\design": ("engineering design path", 35),
+        "incoming proposal documents": ("incoming proposal documents", 50),
+        "submitted documents": ("submitted proposal documents", 35),
+    }
+    for keyword, (reason, weight) in path_bonuses.items():
+        if keyword in path_lower:
+            score += weight
+            if reason not in reasons:
+                reasons.append(reason)
 
     positive_keywords = {
-        "proposal": 90,
-        "quote": 80,
-        "quotation": 80,
-        "fee": 70,
-        "scope": 50,
-        "submission": 50,
-        "report": 70,
-        "inspection": 60,
-        "assessment": 60,
-        "review": 55,
-        "advice": 55,
-        "letter": 45,
-        "certificate": 55,
-        "certification": 55,
-        "form 15": 50,
-        "form 16": 50,
-        "design": 45,
-        "calculation": 45,
-        "calc": 35,
-        "memo": 30,
-        "issued": 35,
+        "wml fee proposal": ("fee proposal", 170),
+        "fee proposal": ("fee proposal", 160),
+        "proposal": ("proposal keyword", 110),
+        "request for quotation": ("request for quotation", 150),
+        "requesting aquotation": ("request for quotation", 120),
+        "quote": ("quote keyword", 80),
+        "quotation": ("quotation keyword", 80),
+        "fee": ("fee keyword", 70),
+        "scope": ("scope keyword", 55),
+        "submission": ("submission keyword", 50),
+        "report": ("report keyword", 100),
+        "inspection": ("inspection keyword", 90),
+        "assessment": ("assessment keyword", 95),
+        "review": ("review keyword", 85),
+        "advice": ("advice keyword", 75),
+        "letter": ("letter keyword", 45),
+        "certificate": ("certificate keyword", 85),
+        "certification": ("certification keyword", 90),
+        "form 15": ("form 15 keyword", 50),
+        "form 16": ("form 16 keyword", 50),
+        "design": ("design keyword", 60),
+        "calculation": ("calculation keyword", 75),
+        "calc": ("calculation keyword", 55),
+        "memo": ("memo keyword", 30),
+        "issued": ("issued keyword", 35),
     }
-    for keyword, weight in positive_keywords.items():
+    for keyword, (reason, weight) in positive_keywords.items():
         if keyword in name_lower or keyword in path_lower:
             score += weight
+            if reason == "fee keyword" and "fee proposal" in reasons:
+                continue
+            if reason not in reasons:
+                reasons.append(reason)
+
+    for keyword, (reason, penalty) in LOW_VALUE_PATH_PENALTIES.items():
+        if keyword in path_lower:
+            score += penalty
+            if reason not in reasons:
+                reasons.append(reason)
 
     negative_keywords = {
-        "invoice",
-        "timesheet",
-        "receipt",
-        "photo",
-        "image",
-        "drawing register",
-        "transmittal",
-        "minutes",
+        "photo": "photo/image",
+        "image": "photo/image",
+        "drawing register": "drawing register",
+        "transmittal": "transmittal",
+        "minutes": "meeting minutes",
     }
-    if any(keyword in name_lower or keyword in path_lower for keyword in negative_keywords):
-        score -= 120
+    for keyword, reason in negative_keywords.items():
+        if keyword in name_lower or keyword in path_lower:
+            score -= 120
+            if reason not in reasons:
+                reasons.append(reason)
 
     if path.suffix.lower() == ".pdf":
-        score += 10
+        score += 30
+        reasons.append("supported PDF")
     elif path.suffix.lower() == ".docx":
-        score += 5
+        score += 30
+        reasons.append("supported Word document")
 
-    return score
+    return score, reasons
+
+
+def build_selection_reasons(file_paths, project_id):
+    selection_reasons = []
+
+    for file_path in file_paths:
+        score, reasons = score_fallback_file(file_path, project_id)
+        if is_authority_file(file_path):
+            reasons.append("authority file")
+        if is_email_file(file_path):
+            reasons.append("email evidence")
+        if not reasons:
+            reasons.append(f"selected by priority rule, score {score}")
+        selection_reasons.append(
+            f"{Path(file_path).name}: {'; '.join(dict.fromkeys(reasons))}"
+        )
+
+    return selection_reasons
+
+
+def get_archive_file_suffixes():
+    return TARGET_FILE_SUFFIXES | AUTHORITY_SUFFIXES | EMAIL_SUFFIXES
+
+
+def find_existing_archive_files(project_id, archive_root=TARGET_DATABASE_DIR):
+    project_archive_folder = Path(archive_root) / str(project_id)
+
+    if not project_archive_folder.exists() or not project_archive_folder.is_dir():
+        return []
+
+    archive_files = []
+    supported_suffixes = get_archive_file_suffixes()
+
+    for file_path in iter_files_safely(project_archive_folder):
+        if file_path.suffix.lower() not in supported_suffixes:
+            continue
+
+        excluded, _ = should_exclude_low_value_file(file_path)
+        if excluded:
+            continue
+
+        archive_files.append(file_path)
+
+    return sorted(archive_files, key=lambda path: str(path).lower())
+
+
+def build_existing_archive_selection_reasons(file_paths, project_id):
+    selection_reasons = []
+
+    for file_path in file_paths:
+        _, reasons = score_fallback_file(file_path, project_id)
+        reasons = ["existing local archive file"] + list(dict.fromkeys(reasons))
+        if is_authority_file(file_path):
+            reasons.append("authority file")
+        if is_email_file(file_path):
+            reasons.append("email evidence")
+        selection_reasons.append(
+            f"{Path(file_path).name}: {'; '.join(dict.fromkeys(reasons))}"
+        )
+
+    return selection_reasons
+
+
+def get_existing_archive_project_folder(archive_files, project_id):
+    if not archive_files:
+        return Path(TARGET_DATABASE_DIR) / str(project_id)
+
+    first_file = Path(archive_files[0])
+    project_id_text = str(project_id).lower()
+
+    for parent in [first_file.parent, *first_file.parents]:
+        if parent.name.lower() == project_id_text:
+            return parent
+
+    return first_file.parent
+
+
+def apply_existing_archive_files(record, project_id, archive_files):
+    archive_files = add_unique_paths(archive_files)
+
+    if not archive_files:
+        return False
+
+    project_archive_folder = get_existing_archive_project_folder(
+        archive_files,
+        project_id,
+    )
+    record["source_project_folder"] = str(project_archive_folder)
+    record["source_files"] = []
+    record["archived_files"] = [str(file_path) for file_path in archive_files]
+    record["selection_reasons"] = build_existing_archive_selection_reasons(
+        archive_files,
+        project_id,
+    )
+
+    primary_archived_files = get_primary_files(record["archived_files"])
+    if primary_archived_files:
+        record["status"] = "Success"
+    else:
+        record["status"] = AUTHORITY_ONLY_STATUS
+
+    return True
 
 
 def find_scoring_fallback_files(project_folder, project_id):
     scored_files = []
 
     for file_path in iter_files_safely(project_folder):
-        if file_path.name.startswith("~$"):
+        excluded, _ = should_exclude_low_value_file(file_path)
+        if excluded:
             continue
 
         if is_authority_file(file_path):
@@ -511,7 +689,7 @@ def find_scoring_fallback_files(project_folder, project_id):
         if file_path.suffix.lower() not in TARGET_FILE_SUFFIXES:
             continue
 
-        score = score_fallback_file(file_path, project_id)
+        score, _ = score_fallback_file(file_path, project_id)
         if score > 0:
             scored_files.append((score, file_path.stat().st_mtime, str(file_path), file_path))
 
@@ -763,6 +941,7 @@ def build_excel_rows(records):
                 "Source Project Folder": record["source_project_folder"],
                 "Source Files": "\n".join(record["source_files"]),
                 "Archived Files": "\n".join(record["archived_files"]),
+                "Selection Reasons": "\n".join(record.get("selection_reasons", [])),
                 "Errors": "\n".join(record["errors"]),
                 "Archived At": record["archived_at"],
             }
@@ -827,6 +1006,9 @@ def write_issue_excel(records, output_path):
                 ),
                 "Archived Files": "\n".join(
                     record.get("archived_files") or []
+                ),
+                "Selection Reasons": "\n".join(
+                    record.get("selection_reasons") or []
                 ),
                 "Errors": "\n".join(
                     record.get("errors") or []
@@ -924,6 +1106,7 @@ def build_archive_record(row, project_id):
         "source_project_folder": "",
         "source_files": [],
         "archived_files": [],
+        "selection_reasons": [],
         "errors": [],
         "archived_at": datetime.now().isoformat(
             timespec="seconds"
@@ -988,6 +1171,20 @@ def main():
 
         record = build_archive_record(row, project_id)
 
+        if PREFER_EXISTING_ARCHIVE_FILES:
+            existing_archive_files = find_existing_archive_files(project_id)
+            if apply_existing_archive_files(record, project_id, existing_archive_files):
+                print(
+                    f"  Existing local archive files found: "
+                    f"{len(existing_archive_files)}"
+                )
+                records_by_project_id[project_id] = record
+                processed_this_run += 1
+                save_archive_outputs(
+                    build_ordered_archive_records(df, records_by_project_id)
+                )
+                continue
+
         project_folder, lookup_error = find_project_folder(
             project_id,
             _CONFIG,
@@ -1014,6 +1211,10 @@ def main():
             project_id,
         )
         selected_files = add_unique_paths(selected_files)
+        record["selection_reasons"] = build_selection_reasons(
+            selected_files,
+            project_id,
+        )
 
         if not selected_files:
             record["status"] = "Missing Target Files"

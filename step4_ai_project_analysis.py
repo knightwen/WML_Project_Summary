@@ -210,6 +210,10 @@ Address and maps rules:
 - If a precise street/site address is present, use it in address and google_maps_query.
 - Build google_maps_query for geocoding, not for human display.
 - Include street/site address, suburb/city, state, and Australia where possible.
+- Most WML projects are in Western Australia. If the state is absent or ambiguous, make the google_maps_query WA-first by including WA, Australia.
+- Address clues in Original project display name, Original project display name without id, and Generated/Pre-extracted project name have very high weight; use those clues before generic document boilerplate.
+- If a project name contains a partial address, suburb, town, asset name, or site name, preserve that location clue in address and google_maps_query.
+- Only use another Australian state such as NSW, QLD, VIC, SA, TAS, NT, or ACT when the project name or document text explicitly identifies that state.
 - If only a regional location is present, include the region/city/state and set address_confidence to medium or low.
 - If the only location is WML's office address, do not use it as the project address.
 - address_source must be one of: pdf, original_project_name, source_folder, city_state_only, not_found.

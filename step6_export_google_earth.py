@@ -22,6 +22,8 @@ from xml.sax.saxutils import escape
 import pandas as pd
 
 from pipeline_utils import (
+    backup_existing_file,
+    ensure_parent_dir,
     require_config_section,
     require_config_value,
     setup_logging,
@@ -38,6 +40,10 @@ OUTPUT_DIR = Path(require_config_value(_CONFIG, "output_dir", "step6"))
 OUTPUT_KML = OUTPUT_DIR / require_config_value(_CONFIG, "output_kml", "step6")
 OUTPUT_CSV = OUTPUT_DIR / require_config_value(_CONFIG, "output_csv", "step6")
 OUTPUT_XLSX = OUTPUT_DIR / require_config_value(_CONFIG, "output_xlsx", "step6")
+FAILURE_REPORT_XLSX = OUTPUT_DIR / _CONFIG.get(
+    "failure_report_xlsx",
+    "6_project_locations_google_earth_failures.xlsx",
+)
 
 
 def get_first_available(row, columns):
@@ -166,6 +172,138 @@ def build_export_table(df):
     return pd.DataFrame(rows)
 
 
+def has_valid_coordinates(row):
+    return (
+        clean_coordinate(row.get("Google Latitude")) is not None
+        and clean_coordinate(row.get("Google Longitude")) is not None
+    )
+
+
+def classify_failure_stage(row):
+    status = get_first_available(row, ["Status"])
+    extraction_status = get_first_available(row, ["Extraction Status"])
+    geocode_status = get_first_available(row, ["Google Geocode Status"])
+
+    if status in {
+        "Not Found",
+        "Source Root Missing",
+        "Missing Target Files",
+        "Authority Only",
+        "Copy Failed",
+        "Partial Success",
+    }:
+        return "Step 2 Archive"
+
+    if extraction_status in {
+        "No Text Extracted",
+        "Extraction Failed",
+        "Missing Target Files",
+    }:
+        return "Step 3 Text Extraction"
+
+    if status in {"AI Error", "Quota Error"} or "ai" in status.lower():
+        return "Step 4 AI Analysis"
+
+    if geocode_status:
+        return "Step 5 Geocode"
+
+    return "Step 6 Export"
+
+
+def build_failure_reason(row):
+    stage = classify_failure_stage(row)
+    status = get_first_available(row, ["Status"])
+    extraction_status = get_first_available(row, ["Extraction Status"])
+    geocode_status = get_first_available(row, ["Google Geocode Status"])
+    address_confidence = get_first_available(row, ["Address Confidence"])
+    address_source = get_first_available(row, ["Address Source"])
+    errors = get_first_available(row, ["Errors"])
+
+    if stage == "Step 2 Archive":
+        return status or "No archived target files available"
+    if stage == "Step 3 Text Extraction":
+        return extraction_status or "No extracted text available"
+    if stage == "Step 4 AI Analysis":
+        return errors or status or "AI analysis did not produce a usable row"
+    if geocode_status:
+        details = [geocode_status]
+        if address_confidence:
+            details.append(f"address confidence: {address_confidence}")
+        if address_source:
+            details.append(f"address source: {address_source}")
+        return "; ".join(details)
+
+    return "Missing valid Google Latitude/Longitude"
+
+
+def build_failure_detail_table(df):
+    rows = []
+
+    for _, row in df.iterrows():
+        if has_valid_coordinates(row):
+            continue
+
+        rows.append(
+            {
+                "Project ID": get_first_available(row, ["Project ID"]),
+                "Failure Stage": classify_failure_stage(row),
+                "Failure Reason": build_failure_reason(row),
+                "Status": get_first_available(row, ["Status"]),
+                "Extraction Status": get_first_available(row, ["Extraction Status"]),
+                "Geocode Status": get_first_available(row, ["Google Geocode Status"]),
+                "Address Confidence": get_first_available(row, ["Address Confidence"]),
+                "Address Source": get_first_available(row, ["Address Source"]),
+                "Project Name": get_first_available(
+                    row,
+                    ["Generated Project Name", "Original Project Display Name"],
+                ),
+                "Project Address": get_first_available(row, ["Project Address"]),
+                "Google Maps Query": get_first_available(row, ["Google Maps Query"]),
+                "Final Project Address": get_first_available(row, ["Final Project Address"]),
+                "Errors": get_first_available(row, ["Errors"]),
+            }
+        )
+
+    return pd.DataFrame(rows)
+
+
+def build_failure_summary_table(df):
+    detail_df = build_failure_detail_table(df)
+    if detail_df.empty:
+        return pd.DataFrame(
+            columns=[
+                "Failure Stage",
+                "Project Count",
+                "Failure Reason",
+                "Reason Count",
+            ]
+        )
+
+    summary_df = (
+        detail_df.groupby(["Failure Stage", "Failure Reason"], dropna=False)
+        .size()
+        .reset_index(name="Reason Count")
+    )
+    stage_counts = (
+        detail_df.groupby("Failure Stage", dropna=False)
+        .size()
+        .rename("Project Count")
+        .reset_index()
+    )
+    summary_df = summary_df.merge(stage_counts, on="Failure Stage", how="left")
+    return summary_df[
+        ["Failure Stage", "Project Count", "Failure Reason", "Reason Count"]
+    ].sort_values(["Failure Stage", "Reason Count"], ascending=[True, False])
+
+
+def write_failure_report(summary_df, detail_df, output_path):
+    output_path = ensure_parent_dir(output_path)
+    backup_existing_file(output_path)
+    with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
+        summary_df.to_excel(writer, sheet_name="Summary", index=False)
+        detail_df.to_excel(writer, sheet_name="Failed Projects", index=False)
+
+
 def main():
     setup_logging("step6_export_google_earth")
     input_path = Path(INPUT_EXCEL)
@@ -188,8 +326,13 @@ def main():
         return
 
     export_df = build_export_table(df)
+    failure_detail_df = build_failure_detail_table(df)
+    failure_summary_df = build_failure_summary_table(df)
+    write_failure_report(failure_summary_df, failure_detail_df, FAILURE_REPORT_XLSX)
+
     if export_df.empty:
         print("No rows with valid Google Latitude/Longitude were found.")
+        print(f"Failure report: {FAILURE_REPORT_XLSX}")
         return
 
     kml_text = build_kml(df)
@@ -202,6 +345,8 @@ def main():
     print(f"KML: {OUTPUT_KML}")
     print(f"CSV: {OUTPUT_CSV}")
     print(f"Excel: {OUTPUT_XLSX}")
+    print(f"Failure rows: {len(failure_detail_df)}")
+    print(f"Failure report: {FAILURE_REPORT_XLSX}")
 
 
 if __name__ == "__main__":

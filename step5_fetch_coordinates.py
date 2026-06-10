@@ -55,6 +55,8 @@ COORDINATE_COLUMNS = [
     "Google Place ID",
     "Google Partial Match",
     "Google Result Types",
+    "Google Address State",
+    "Google Geocode Preference Flag",
     "Google Geocode Status",
     "Final Project Address",
     "Final Address Source",
@@ -70,6 +72,9 @@ REQUEST_DELAY_SECONDS = float(_CONFIG.get("request_delay_seconds", 0.1))
 SAVE_EVERY_N_ROWS = int(_CONFIG.get("save_every_n_rows", 20))
 RESUME_FROM_EXISTING_OUTPUT = bool(_CONFIG.get("resume_from_existing_output", True))
 RETRY_ERROR_GEOCODES = bool(_CONFIG.get("retry_error_geocodes", True))
+PREFERRED_STATE = str(_CONFIG.get("preferred_state", "WA")).strip()
+PREFERRED_COUNTRY = str(_CONFIG.get("preferred_country", "AU")).strip()
+FALLBACK_WITHOUT_STATE_FILTER = bool(_CONFIG.get("fallback_without_state_filter", True))
 
 
 def get_first_available(row, columns):
@@ -95,45 +100,116 @@ def build_geocode_query(row):
     return ", ".join(part for part in parts if part)
 
 
-def geocode(gmaps_client, query):
-    try:
-        results = gmaps_client.geocode(query)
-    except Exception as exc:
-        return {
-            "Google Latitude": None,
-            "Google Longitude": None,
-            "Google Location Type": "",
-            "Google Formatted Address": "",
-            "Google Place ID": "",
-            "Google Partial Match": "",
-            "Google Result Types": "",
-            "Google Geocode Status": f"Error: {exc}",
-        }
+def empty_geocode_result(status):
+    return {
+        "Google Latitude": None,
+        "Google Longitude": None,
+        "Google Location Type": "",
+        "Google Formatted Address": "",
+        "Google Place ID": "",
+        "Google Partial Match": "",
+        "Google Result Types": "",
+        "Google Address State": "",
+        "Google Geocode Preference Flag": "",
+        "Google Geocode Status": status,
+    }
 
-    if not results:
-        return {
-            "Google Latitude": None,
-            "Google Longitude": None,
-            "Google Location Type": "",
-            "Google Formatted Address": "",
-            "Google Place ID": "",
-            "Google Partial Match": "",
-            "Google Result Types": "",
-            "Google Geocode Status": "No Result",
-        }
 
-    first = results[0]
-    location = first.get("geometry", {}).get("location", {})
+def get_geocode_state(result):
+    for component in result.get("address_components", []):
+        types = component.get("types", [])
+        if "administrative_area_level_1" in types:
+            return str(
+                component.get("short_name")
+                or component.get("long_name")
+                or ""
+            ).strip()
+    return ""
+
+
+def geocode_result_to_row(result, status, preference_flag):
+    location = result.get("geometry", {}).get("location", {})
     return {
         "Google Latitude": location.get("lat"),
         "Google Longitude": location.get("lng"),
-        "Google Location Type": first.get("geometry", {}).get("location_type", ""),
-        "Google Formatted Address": first.get("formatted_address", ""),
-        "Google Place ID": first.get("place_id", ""),
-        "Google Partial Match": first.get("partial_match", False),
-        "Google Result Types": ", ".join(first.get("types", [])),
-        "Google Geocode Status": "Success",
+        "Google Location Type": result.get("geometry", {}).get("location_type", ""),
+        "Google Formatted Address": result.get("formatted_address", ""),
+        "Google Place ID": result.get("place_id", ""),
+        "Google Partial Match": result.get("partial_match", False),
+        "Google Result Types": ", ".join(result.get("types", [])),
+        "Google Address State": get_geocode_state(result),
+        "Google Geocode Preference Flag": preference_flag,
+        "Google Geocode Status": status,
     }
+
+
+def call_geocode(gmaps_client, query, **kwargs):
+    try:
+        return gmaps_client.geocode(query, **kwargs), ""
+    except Exception as exc:
+        return [], f"Error: {exc}"
+
+
+def geocode(
+    gmaps_client,
+    query,
+    preferred_state=PREFERRED_STATE,
+    preferred_country=PREFERRED_COUNTRY,
+    fallback_without_state_filter=FALLBACK_WITHOUT_STATE_FILTER,
+):
+    preferred_state = str(preferred_state or "").strip().upper()
+    preferred_country = str(preferred_country or "").strip().upper()
+
+    try:
+        preferred_components = {
+            "country": preferred_country,
+            "administrative_area": preferred_state,
+        }
+        results, error = call_geocode(
+            gmaps_client,
+            query,
+            region="au",
+            components=preferred_components,
+        )
+    except Exception as exc:
+        return empty_geocode_result(f"Error: {exc}")
+
+    if error:
+        return empty_geocode_result(error)
+
+    if results:
+        first = results[0]
+        state = get_geocode_state(first).upper()
+        preference_flag = ""
+        if preferred_state and state and state != preferred_state:
+            preference_flag = f"Preferred state {preferred_state} query returned {state} - manual review"
+        return geocode_result_to_row(first, "Success", preference_flag)
+
+    if not fallback_without_state_filter:
+        result = empty_geocode_result("No Result")
+        result["Google Geocode Preference Flag"] = (
+            f"No result in preferred state {preferred_state}"
+        )
+        return result
+
+    fallback_results, fallback_error = call_geocode(gmaps_client, query, region="au")
+    if fallback_error:
+        return empty_geocode_result(fallback_error)
+
+    if not fallback_results:
+        result = empty_geocode_result("No Result")
+        result["Google Geocode Preference Flag"] = (
+            f"No result in preferred state {preferred_state} or Australia-wide fallback"
+        )
+        return result
+
+    first = fallback_results[0]
+    state = get_geocode_state(first).upper()
+    preference_flag = f"Fallback after no result in preferred state {preferred_state}"
+    if preferred_state and state and state != preferred_state:
+        preference_flag = f"Fallback outside preferred state {preferred_state} - manual review"
+
+    return geocode_result_to_row(first, "Success", preference_flag)
 
 
 def is_api_configuration_error(status):
@@ -167,6 +243,7 @@ def build_final_address(row):
     location_type = str(row.get("Google Location Type", "")).strip()
     partial_match = str(row.get("Google Partial Match", "")).strip().lower()
     address_confidence = str(row.get("Address Confidence", "")).strip().lower()
+    preference_flag = str(row.get("Google Geocode Preference Flag", "")).strip()
 
     if google_address:
         final_address = google_address
@@ -183,6 +260,7 @@ def build_final_address(row):
         or address_confidence == "low"
         or location_type in {"APPROXIMATE", "GEOMETRIC_CENTER"}
         or partial_match == "true"
+        or bool(preference_flag)
     )
 
     return final_address, source, "Yes" if needs_review else "No"
