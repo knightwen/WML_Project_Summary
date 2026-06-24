@@ -40,6 +40,8 @@ OUTPUT_DIR = Path(require_config_value(_CONFIG, "output_dir", "step6"))
 OUTPUT_KML = OUTPUT_DIR / require_config_value(_CONFIG, "output_kml", "step6")
 OUTPUT_CSV = OUTPUT_DIR / require_config_value(_CONFIG, "output_csv", "step6")
 OUTPUT_XLSX = OUTPUT_DIR / require_config_value(_CONFIG, "output_xlsx", "step6")
+OUTPUT_ALL_CSV = OUTPUT_CSV.with_name(f"{OUTPUT_CSV.stem}_all_projects.csv")
+OUTPUT_ALL_XLSX = OUTPUT_XLSX.with_name(f"{OUTPUT_XLSX.stem}_all_projects.xlsx")
 FAILURE_REPORT_XLSX = OUTPUT_DIR / _CONFIG.get(
     "failure_report_xlsx",
     "6_project_locations_google_earth_failures.xlsx",
@@ -149,25 +151,37 @@ def build_export_table(df):
         if lat is None or lon is None:
             continue
 
-        rows.append(
-            {
-                "Project ID": get_first_available(row, ["Project ID"]),
-                "Project Name": get_first_available(
-                    row,
-                    ["Generated Project Name", "Original Project Display Name"],
-                ),
-                "Latitude": lat,
-                "Longitude": lon,
-                "Client": get_first_available(row, ["Client Name", "Original Client"]),
-                "Manager": get_first_available(row, ["Manager"]),
-                "Start Date": format_date(row.get("Start Date")),
-                "Contract Amount": get_first_available(row, ["Contract Amount"]),
-                "Industry/Sector": get_first_available(row, ["Industry/Sector"]),
-                "Key Words": get_first_available(row, ["Key Words"]),
-                "Project Profile": get_first_available(row, ["Project Profile"]),
-                "Description": get_first_available(row, ["Description"]),
-            }
-        )
+        export_row = row.to_dict()
+        export_row["Google Latitude"] = lat
+        export_row["Google Longitude"] = lon
+
+        if "Latitude" not in export_row:
+            export_row["Latitude"] = lat
+        if "Longitude" not in export_row:
+            export_row["Longitude"] = lon
+
+        rows.append(export_row)
+
+    return pd.DataFrame(rows)
+
+
+def build_all_projects_table(df):
+    rows = []
+
+    for _, row in df.iterrows():
+        export_row = row.to_dict()
+        if has_valid_coordinates(row):
+            export_row["Google Latitude"] = clean_coordinate(row.get("Google Latitude"))
+            export_row["Google Longitude"] = clean_coordinate(row.get("Google Longitude"))
+            export_row["Export Status"] = "Exported"
+            export_row["Failure Stage"] = ""
+            export_row["Failure Reason"] = ""
+        else:
+            export_row["Export Status"] = "Not Exported"
+            export_row["Failure Stage"] = classify_failure_stage(row)
+            export_row["Failure Reason"] = build_failure_reason(row)
+
+        rows.append(export_row)
 
     return pd.DataFrame(rows)
 
@@ -326,25 +340,29 @@ def main():
         return
 
     export_df = build_export_table(df)
+    all_projects_df = build_all_projects_table(df)
     failure_detail_df = build_failure_detail_table(df)
     failure_summary_df = build_failure_summary_table(df)
     write_failure_report(failure_summary_df, failure_detail_df, FAILURE_REPORT_XLSX)
+    write_csv_safely(all_projects_df, OUTPUT_ALL_CSV, index=False, encoding="utf-8-sig")
+    write_excel_safely(all_projects_df, OUTPUT_ALL_XLSX, index=False)
 
     if export_df.empty:
         print("No rows with valid Google Latitude/Longitude were found.")
+        print(f"All projects CSV: {OUTPUT_ALL_CSV}")
+        print(f"All projects Excel: {OUTPUT_ALL_XLSX}")
         print(f"Failure report: {FAILURE_REPORT_XLSX}")
         return
 
-    kml_text = build_kml(df)
-    write_text_safely(OUTPUT_KML, kml_text, encoding="utf-8")
     write_csv_safely(export_df, OUTPUT_CSV, index=False, encoding="utf-8-sig")
     write_excel_safely(export_df, OUTPUT_XLSX, index=False)
 
-    print("Google Earth export complete.")
+    print("Location export complete.")
     print(f"Rows exported: {len(export_df)}")
-    print(f"KML: {OUTPUT_KML}")
     print(f"CSV: {OUTPUT_CSV}")
     print(f"Excel: {OUTPUT_XLSX}")
+    print(f"All projects CSV: {OUTPUT_ALL_CSV}")
+    print(f"All projects Excel: {OUTPUT_ALL_XLSX}")
     print(f"Failure rows: {len(failure_detail_df)}")
     print(f"Failure report: {FAILURE_REPORT_XLSX}")
 

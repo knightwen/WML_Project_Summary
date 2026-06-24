@@ -13,7 +13,7 @@ Output:
 - data/processed/1_source_projects.xlsx
 
 Attention:
-- start:1 ====> end:100
+- default start:1 ====> end:100
 """
 import re
 from pathlib import Path

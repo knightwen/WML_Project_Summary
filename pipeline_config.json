@@ -23,8 +23,8 @@
     "input_excel": "{source_database_dir}\\job_sum.xlsx",
     "output_excel": "data\\processed\\1_source_projects_{batch_range}.xlsx",
     "sort_column": "Start Date",
-    "row_start": 1,
-    "row_end": 500
+    "row_start": 1501,
+    "row_end": 1843
   },
   "step2": {
     "source_excel": "data\\processed\\1_source_projects_{batch_range}.xlsx",
@@ -138,10 +138,10 @@
     "retry_ai_error_rows": true
   },
   "step5": {
-    "input_excel": "data\\processed\\4_project_analysis_results_{batch_range}.xlsx",
-    "output_excel": "data\\processed\\5_final_project_results_with_coordinates_{batch_range}.xlsx",
-    "fallback_csv": "data\\processed\\5_final_project_results_with_coordinates_{batch_range}.csv",
-    "fallback_excel": "data\\processed\\5_final_project_results_with_coordinates_recovered_{batch_range}.xlsx",
+    "input_excel": "data\\processed\\4_project_analysis_results_1_1843.xlsx",
+    "output_excel": "data\\processed\\5_final_project_results_with_coordinates__1_1843.xlsx",
+    "fallback_csv": "data\\processed\\5_final_project_results_with_coordinates__1_1843.csv",
+    "fallback_excel": "data\\processed\\5_final_project_results_with_coordinates_recovered__1_1843.xlsx",
     "request_delay_seconds": 0.1,
     "save_every_n_rows": 20,
     "resume_from_existing_output": false,
